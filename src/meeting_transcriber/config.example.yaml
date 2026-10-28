@@ -1,0 +1,55 @@
+# meeting-transcriber configuration.
+# API keys do not go here: they go in the .env file next to this one.
+
+# ── LLM: names the speakers and writes the summaries ─────────────────────────
+# provider is one of:
+#   openai, openrouter, fireworks, together, groq, deepseek, mistral, xai,
+#   gemini (Google AI Studio key), anthropic, vertex (Google Cloud), ollama (local),
+#   openai-compatible (any other gateway: set base_url)
+# model is the provider's own model id; check its model list for current ones.
+llm:
+  provider: openrouter
+  model: google/gemini-2.5-flash
+  # base_url: https://llm.example.com/v1   # override the provider's endpoint
+  # api_key_env: MY_GATEWAY_KEY             # read the key from another variable
+  # max_tokens: 8192                        # raise if long summaries come back cut off
+  # project: my-gcp-project                 # vertex only (else GOOGLE_CLOUD_PROJECT)
+  # location: global                        # vertex only
+
+# ── defaults (any project below can override these) ──────────────────────────
+output_dir: ~/Meetings         # one folder per meeting is created in here
+inbox: ~/Meetings/inbox        # `transcribe` with no file takes everything in here
+transcription_model: scribe_v2 # ElevenLabs speech-to-text model
+summary: true                  # write summary.md and summary-short.txt
+summary_language: auto         # auto = the language of the conversation, or e.g. English
+
+# ── projects (optional): who is usually on the call, and what it is about ────
+# Use one with `transcribe -p <key>`, or pick it when `transcribe` asks.
+# Replace {} with your own, shaped like the example, or ask your AI assistant.
+projects: {}
+#  work:
+#    name: Work
+#    output_dir: ~/Meetings/work
+#    speakers: [Alice, Bob, Carol]
+#    roles:                       # optional, helps tell people apart
+#      Alice: team lead, runs the meeting
+#      Bob: data engineer
+#    context: >
+#      Weekly syncs of a small analytics team: dashboards, data pipelines.
+#    # words speech recognition tends to get wrong (names are added automatically)
+#    keyterms: [dbt, Airflow, BigQuery]
+#
+#  notes:
+#    name: Notes
+#    output_dir: ~/Notes
+#    flat: true          # <date>.md straight into output_dir, audio into recordings/
+#    frontmatter: true   # mark transcripts apart from hand-written notes
+#    summary: false      # summarize on demand: transcribe summarize <file>
+#    speakers: [Alice]
+
+# ── voice ID (optional): see `transcribe voices --help` ──────────────────────
+# Left: the person part of a clip's file name in voices/ (<person>-<lang>.<ext>).
+# Right: how that person is spelled in speaker lists. A person with no entry here
+# matches by file name (alice-en.m4a matches Alice).
+voices: {}
+#  alice: [Alice, Alice Smith]

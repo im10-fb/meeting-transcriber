@@ -1,0 +1,17 @@
+# secrets and personal data, in case they end up in a clone
+.env
+config.yaml
+voices/
+voiceprints/
+*.npy
+
+# local notes
+PUBLISHING.md
+
+# build and tooling
+.venv/
+__pycache__/
+.pytest_cache/
+dist/
+*.egg-info/
+.DS_Store
