@@ -5,14 +5,19 @@ the terminal for every call.
 
 - **Open it** to pick a recording, or **drop audio or video files** on its icon or Dock
   tile. Several files are joined in order, as with the command.
-- It asks who was on the call (Enter lets the LLM work it out), then runs `transcribe`
-  in a Terminal window, so progress and errors stay visible.
+- It asks who was on the call. With projects in `config.yaml`, pick one and untick its
+  speakers who were not there (they go to `-d`), then add any guests. `&`, `+`, `;` and
+  "and" separate names as commas do. Before running, it shows exactly whom it will look
+  for and flags anything that does not look like a name, since each name is one voice
+  and the count caps how many voices speech recognition separates.
+- It then runs `transcribe` in a Terminal window, so progress and errors stay visible.
 - When it is done, it prints the short summary, opens the meeting folder and posts a
   notification.
 - On first launch, with no config yet, it runs `transcribe init` and `transcribe doctor`
   instead. Keys are typed into the terminal, never into a dialog.
 - **More…** checks the setup, opens the keys or `config.yaml` in TextEdit, opens
-  `~/Meetings`, records a call (needs BlackHole) or upgrades the tool.
+  `~/Meetings`, records a call (needs BlackHole), enrolls voices for recognition by
+  voice (needs the `voice` extra) or upgrades the tool.
 
 ## Build
 
@@ -34,7 +39,9 @@ For each run it writes a one-off `.command` file to
 `~/Library/Caches/meeting-transcriber-app/` and opens it with Terminal. The file
 deletes itself as it starts. Opening a `.command` file needs no Automation permission,
 unlike scripting Terminal directly. The run uses `transcribe ... --json` and reads the
-result paths with `plutil`, so nothing beyond macOS and the CLI is needed.
+result paths with `plutil`, so nothing beyond macOS and the CLI is needed. The project list
+and the name check run in the Python that runs `transcribe` (read from its launcher),
+so they see the same config.
 
 The app is signed ad hoc, which is enough for an app you build on your own Mac. A copy
 downloaded from the internet would need a Developer ID signature and notarisation.
