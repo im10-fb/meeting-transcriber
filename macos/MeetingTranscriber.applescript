@@ -67,6 +67,165 @@ on transcribeBody(fileArgs, speakerArg)
 		"fi" & linefeed & "rm -f \"$out\""
 end transcribeBody
 
+-- The Python that runs `transcribe`, read from its launcher, so the helpers below
+-- see the same config and need nothing else installed.
+on toolPython()
+	return do shell script "export PATH=\"$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; head -1 \"$(command -v transcribe)\" | sed 's/^#!//'"
+end toolPython
+
+on splitText(t, delim)
+	set AppleScript's text item delimiters to delim
+	set parts to text items of t
+	set AppleScript's text item delimiters to ""
+	return parts
+end splitText
+
+on joinList(l, delim)
+	set AppleScript's text item delimiters to delim
+	set t to l as text
+	set AppleScript's text item delimiters to ""
+	return t
+end joinList
+
+-- Projects from config.yaml: a list of {key, title, people (a list of names)}.
+on projectList()
+	set code to "from meeting_transcriber.common import load_config" & linefeed & ¬
+		"for k, p in (load_config().get('projects') or {}).items():" & linefeed & ¬
+		"    print('\\t'.join([str(k), str(p.get('name') or k), '|'.join(map(str, p.get('speakers') or [])), '.']))"
+	try
+		set out to do shell script quoted form of toolPython() & " -I -c " & quoted form of code
+	on error
+		return {}
+	end try
+	set res to {}
+	repeat with ln in paragraphs of out
+		set parts to splitText(ln as text, tab)
+		if (count of parts) is 4 then
+			set people to {}
+			if item 3 of parts is not "" then set people to splitText(item 3 of parts, "|")
+			set end of res to {key:item 1 of parts, title:item 2 of parts, people:people}
+		end if
+	end repeat
+	return res
+end projectList
+
+-- Read typed names the way people write them ("Alice & Bob and Sam: client"):
+-- &, +, ;, / and "and" separate names as commas do. Returns {arg, lines, count}:
+-- arg for -s, one display line per person, and a flag when something looks wrong.
+on parseNames(t)
+	set code to "import re, sys" & linefeed & ¬
+		"text = sys.argv[1]" & linefeed & ¬
+		"for sep in '&+;/\\n\\r': text = text.replace(sep, ',')" & linefeed & ¬
+		"people = []" & linefeed & ¬
+		"for item in text.split(','):" & linefeed & ¬
+		"    name, _, role = item.partition(':')" & linefeed & ¬
+		"    role = ' '.join(role.split())" & linefeed & ¬
+		"    for n in re.split(r'\\s+(?:and|und)\\s+', name.strip(), flags=re.I):" & linefeed & ¬
+		"        n = ' '.join(n.split())" & linefeed & ¬
+		"        if n and n not in [p[0] for p in people]:" & linefeed & ¬
+		"            odd = len(n.split()) > 3 or n[0].islower() or any(c.isdigit() for c in n)" & linefeed & ¬
+		"            people.append((n, role, odd))" & linefeed & ¬
+		"for n, role, odd in people:" & linefeed & ¬
+		"    print('\\t'.join([n, role, 'odd' if odd else '', '.']))"
+	set out to do shell script quoted form of toolPython() & " -I -c " & quoted form of code & " " & quoted form of t
+	set args to {}
+	set shown to {}
+	set odd to false
+	repeat with ln in paragraphs of out
+		set parts to splitText(ln as text, tab)
+		if (count of parts) is 4 then
+			set {n, r, flag} to items 1 thru 3 of parts
+			if r is "" then
+				set end of args to n
+				set line_ to "  •  " & n
+			else
+				set end of args to n & ": " & r
+				set line_ to "  •  " & n & "  (role: " & r & ")"
+			end if
+			if flag is "odd" then
+				set odd to true
+				set line_ to line_ & "   ← is this a name?"
+			end if
+			set end of shown to line_
+		end if
+	end repeat
+	return {arg:joinList(args, ", "), shownLines:shown, odd:odd}
+end parseNames
+
+-- Who was on the call: a project (tick its people) and any guests, then a check
+-- of exactly whom the tool will look for, since each name caps the voices it splits.
+-- Returns the flags for `transcribe`, or "" to work it all out.
+-- The `transcribe` flags for a project key ("" for none), the project's people who
+-- were not on the call, and the -s text for everyone else.
+on buildFlags(projKey, dropped, guestsArg)
+	set flags to ""
+	if projKey is not "" then set flags to " -p " & quoted form of projKey
+	if (count of dropped) > 0 then set flags to flags & " -d " & quoted form of joinList(dropped, ", ")
+	if guestsArg is not "" then set flags to flags & " -s " & quoted form of guestsArg
+	return flags
+end buildFlags
+
+on askPeople(fileCount)
+	set projects to projectList()
+	set proj to missing value
+	if (count of projects) > 0 then
+		set titles to {}
+		repeat with p in projects
+			set end of titles to title of p
+		end repeat
+		set end of titles to "No project"
+		set pick to choose from list titles with title appTitle with prompt "Which project is this call for?" default items {item 1 of titles}
+		if pick is false then error number -128
+		repeat with p in projects
+			if title of p is item 1 of pick then set proj to contents of p
+		end repeat
+	end if
+	set guestsText to ""
+	repeat
+		set flags to ""
+		set ticked to {}
+		set dropped to {}
+		if proj is not missing value and (count of people of proj) > 0 then
+			set ticked to choose from list (people of proj) with title appTitle with prompt "Who was on the call? Untick anyone who wasn't." default items (people of proj) with multiple selections allowed and empty selection allowed
+			if ticked is false then error number -128
+			repeat with n in people of proj
+				if ticked does not contain (contents of n) then set end of dropped to contents of n
+			end repeat
+		end if
+		if proj is not missing value then
+			set q to "Anyone else on the call? Names separated by commas." & return & "Add a role after a colon if it helps, e.g. Sam: client." & return & "Leave empty if no one else."
+		else
+			set q to "Who was on the call? Names separated by commas." & return & "Add a role after a colon if it helps, e.g. Sam: client." & return & "Leave empty to let it work out the names."
+		end if
+		set guestsText to text returned of (display dialog q default answer guestsText buttons {"Cancel", "Next"} default button 2 with title appTitle with icon note)
+		set guests to parseNames(guestsText)
+		if proj is missing value then
+			set flags to buildFlags("", {}, arg of guests)
+		else
+			set flags to buildFlags(key of proj, dropped, arg of guests)
+		end if
+
+		set shown to {}
+		repeat with n in ticked
+			set end of shown to "  •  " & n
+		end repeat
+		set shown to shown & (shownLines of guests)
+		set total to count of shown
+		if total is 0 then
+			set msg to "No names given: it will work out how many people spoke and try to name them from the conversation."
+		else
+			set msg to "It will look for " & total & " voice"
+			if total > 1 then set msg to msg & "s"
+			set msg to msg & ":" & return & joinList(shown, return) & return & return & "Each name is one voice, so list everyone who spoke and no one else."
+		end if
+		if proj is not missing value then set msg to "Project: " & (title of proj) & return & return & msg
+		if odd of guests then set msg to msg & return & return & "Something above does not look like a name. Edit it if it was meant as a note."
+		if fileCount > 1 then set msg to msg & return & return & "The " & fileCount & " files are joined into one call. Transcribe separate calls one at a time."
+		set b to button returned of (display dialog msg buttons {"Cancel", "Edit", "Transcribe"} default button 3 with title appTitle with icon note)
+		if b is "Transcribe" then return flags
+	end repeat
+end askPeople
+
 on transcribeFiles(theFiles)
 	if not isConfigured() then
 		display dialog "Meeting Transcriber is not set up yet. It needs your ElevenLabs and LLM API keys first." buttons {"Cancel", "Set up now"} default button 2 with title appTitle with icon note
@@ -74,27 +233,20 @@ on transcribeFiles(theFiles)
 		return
 	end if
 	set fileArgs to ""
-	set names to ""
 	repeat with f in theFiles
-		set p to POSIX path of f
-		set fileArgs to fileArgs & " " & quoted form of p
-		set names to names & "  " & (do shell script "basename " & quoted form of p) & return
+		set fileArgs to fileArgs & " " & quoted form of (POSIX path of f)
 	end repeat
-	set reply to display dialog "Transcribing:" & return & names & return & "Who was on the call? For example: Alice, Sam: client" & return & "Leave empty to let it work out the names." default answer "" buttons {"Cancel", "Transcribe"} default button 2 with title appTitle with icon note
-	set speakers to text returned of reply
-	set speakerArg to ""
-	if speakers is not "" then set speakerArg to " -s " & quoted form of speakers
-	set body to transcribeBody(fileArgs, speakerArg)
-	runInTerminal(body)
+	set flags to askPeople(count of theFiles)
+	runInTerminal(transcribeBody(fileArgs, flags))
 end transcribeFiles
 
 on chooseAndTranscribe()
-	set theFiles to choose file with prompt "Choose a recording (audio or video). You can pick several parts of one call." of type {"public.audio", "public.movie", "public.audiovisual-content"} default location (path to downloads folder) with multiple selections allowed
+	set theFiles to choose file with prompt "Choose a recording (audio or video). Several files are joined into one call." of type {"public.audio", "public.movie", "public.audiovisual-content"} default location (path to downloads folder) with multiple selections allowed
 	transcribeFiles(theFiles)
 end chooseAndTranscribe
 
 on moreMenu()
-	set opts to {"Check setup", "Edit API keys", "Edit config (models, projects)", "Open meetings folder", "Record a call (needs BlackHole)", "Run first-time setup", "Update Meeting Transcriber"}
+	set opts to {"Check setup", "Edit API keys", "Edit config (models, projects)", "Open meetings folder", "Record a call (needs BlackHole)", "Voice recognition: enroll voices", "Voice recognition: open clips folder", "Run first-time setup", "Update Meeting Transcriber"}
 	set pick to choose from list opts with title appTitle with prompt "What would you like to do?" default items {"Check setup"}
 	if pick is false then return
 	set pick to item 1 of pick
@@ -110,6 +262,10 @@ on moreMenu()
 		do shell script "mkdir -p ~/Meetings && open ~/Meetings"
 	else if pick is "Record a call (needs BlackHole)" then
 		runInTerminal("echo 'Recording. Press Ctrl-C to stop; the file goes to your inbox.'; echo 'Then open Meeting Transcriber and choose the recording.'; echo; transcribe record")
+	else if pick is "Voice recognition: enroll voices" then
+		runInTerminal("echo 'Building voiceprints from the clips in ~/.config/meeting-transcriber/voices'; echo; transcribe voices enroll && echo && transcribe voices check")
+	else if pick is "Voice recognition: open clips folder" then
+		do shell script "mkdir -p " & quoted form of (configDir() & "voices") & " && open " & quoted form of (configDir() & "voices")
 	else if pick is "Run first-time setup" then
 		runSetup()
 	else if pick is "Update Meeting Transcriber" then
