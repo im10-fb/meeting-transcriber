@@ -110,7 +110,7 @@ def embed(chunks: list[np.ndarray]) -> np.ndarray:
     enc = encoder()
     rows = []
     for c in chunks:
-        v = enc.encode_batch(torch.from_numpy(c).unsqueeze(0)).squeeze().detach().numpy()
+        v = enc.encode_batch(torch.from_numpy(c).unsqueeze(0)).squeeze().detach().cpu().numpy()
         rows.append(v / (np.linalg.norm(v) + 1e-9))
     return np.stack(rows).astype(np.float32)
 
